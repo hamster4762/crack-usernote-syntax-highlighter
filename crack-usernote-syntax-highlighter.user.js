@@ -167,8 +167,8 @@
 
         // --- 크기 늘리기 로직 ---
         dialog.classList.remove('max-w-lg');
-        dialog.style.setProperty('width', '50%', 'important');
-        dialog.style.setProperty('height', '80%', 'important');
+        dialog.style.setProperty('width', '90%', 'important');
+        dialog.style.setProperty('height', '90%', 'important');
 
         const wFull = dialog.querySelector('.w-full');
         if (wFull) {
