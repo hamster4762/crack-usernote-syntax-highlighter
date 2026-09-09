@@ -1,18 +1,17 @@
 # 크랙 유저노트 Syntax Highlighter
 - 크랙 유저노트에 JSON/MARKDOWN/TOML/XML 문법 강조 기능을 추가합니다.
-- 이 확장은 gemini를 이용하여 제작되었습니다.
 - 다운로드 : https://github.com/hamster4762/crack-usernote-syntax-highlighter/raw/refs/heads/main/crack-usernote-syntax-highlighter.user.js
 
 # 사진
 
 ## JSON
-<img width="958" height="751" alt="image" src="https://github.com/user-attachments/assets/d97644c1-4450-486e-8d9c-903fdb79f286" />
+<img width="600" alt="image" src="https://github.com/user-attachments/assets/b7d91482-8a29-4324-9932-a8d83ce80ed1" />
 
 ## Markdown
-<img width="956" height="757" alt="image" src="https://github.com/user-attachments/assets/8527f8ca-2e2b-4aba-bc2f-0128819758ee" />
+<img width="600" alt="image" src="https://github.com/user-attachments/assets/3a15d7dd-eb0b-4e22-896c-64efd6cfae91" />
 
 ## TOML
-<img width="956" height="747" alt="image" src="https://github.com/user-attachments/assets/9e1874f4-273f-4713-92a3-4185c98018aa" />
+<img width="600" alt="image" src="https://github.com/user-attachments/assets/503331d7-5b0c-4ed5-84a2-3824366b860b" />
 
 ## XML
-<img width="949" height="747" alt="image" src="https://github.com/user-attachments/assets/5fc0686b-3216-4f47-8920-a90e6c97fb21" />
+<img width="600" alt="image" src="https://github.com/user-attachments/assets/d688662e-4976-4424-ace7-5e431808bc56" />
