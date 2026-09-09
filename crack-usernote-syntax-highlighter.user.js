@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 유저노트 문법 강조기
 // @namespace    https://crack.wrtn.ai/
-// @version      1.0.0
+// @version      1.0.1
 // @description  유저노트 팝업 확대 및 기본/JSON/MARKDOWN/TOML/XML 색상 강조. (version 관리방식: 크랙UI변경.기능추가및수정.핫픽스)
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -270,7 +270,7 @@
     header.insertBefore(select, header.querySelector(CLOSE_BUTTON_SELECTOR));
 
     // 이벤트와 렌더링 상태는 팝업 단위로 관리한다.
-    let frame = 0, composing = false, lastValue, lastMode, lastSelectionStart, lastSelectionEnd,
+    let frame = 0, lastValue, lastMode, lastSelectionStart, lastSelectionEnd,
       lastSelectionActive, disposed = false;
     const events = new AbortController();
 
@@ -300,7 +300,7 @@
       ensureHeight();
       const mode = select.value;
       select.style.setProperty(`--${CLASS_PREFIX}-surface`, getComputedStyle(dialog).backgroundColor);
-      const active = mode !== DEFAULT_FORMAT && !composing && ta.value.length > 0;
+      const active = mode !== DEFAULT_FORMAT && ta.value.length > 0;
       if (mode === DEFAULT_FORMAT) restoreSpellcheck(); else ta.setAttribute('spellcheck', 'false');
       const grNow = group.getBoundingClientRect(), fr = footer.getBoundingClientRect(), or = options.getBoundingClientRect();
       const footerButton = footer.querySelector('button');
@@ -367,8 +367,9 @@
       if (document.activeElement === ta) schedule();
     }, { signal:events.signal });
     ta.addEventListener('scroll', syncScroll, { signal:events.signal, passive:true });
-    ta.addEventListener('compositionstart', () => { composing = true; mirror.hidden = true; ta.classList.remove(`${CLASS_PREFIX}-colored`); }, { signal:events.signal });
-    ta.addEventListener('compositionend', () => { composing = false; schedule(); }, { signal:events.signal });
+    // 조합 중에도 input으로 강조를 갱신하고 원래 textarea의 IME 동작을 유지한다.
+    ta.addEventListener('compositionstart', schedule, { signal:events.signal });
+    ta.addEventListener('compositionend', schedule, { signal:events.signal });
     select.addEventListener('change', () => {
       saveFormat(select.value);
       schedule();
