@@ -197,6 +197,8 @@
     .${CLASS_PREFIX}-mirror { ${createColorVariables(COLORS.light)} }
     .${CLASS_PREFIX}-mirror[data-dark="true"] { ${createColorVariables(COLORS.dark)} }
     ${TOKEN_KINDS.map(kind => `.${CLASS_PREFIX}-mirror .${CLASS_PREFIX}-${kind} {color:var(--${CLASS_PREFIX}-${kind}) !important;}`).join('\n')}
+    .${CLASS_PREFIX}-mirror .${CLASS_PREFIX}-selection { color:#fff !important;
+      background:rgba(59,130,246,.55) !important; }
 
     /* 유저노트 헤더의 문법 선택 상자 */
     .${CLASS_PREFIX}-select { font:inherit; font-size:.8em; color:inherit; background:var(--${CLASS_PREFIX}-surface);
@@ -268,7 +270,8 @@
     header.insertBefore(select, header.querySelector(CLOSE_BUTTON_SELECTOR));
 
     // 이벤트와 렌더링 상태는 팝업 단위로 관리한다.
-    let frame = 0, composing = false, lastValue, lastMode, disposed = false;
+    let frame = 0, composing = false, lastValue, lastMode, lastSelectionStart, lastSelectionEnd,
+      lastSelectionActive, disposed = false;
     const events = new AbortController();
 
     // 크랙의 인라인 자동 높이보다 편집영역 확장 규칙을 우선한다.
@@ -316,15 +319,38 @@
       mirror.style.left = `${tr.left - gr.left - group.clientLeft + group.scrollLeft + ta.clientLeft}px`;
       mirror.style.top = `${tr.top - gr.top - group.clientTop + group.scrollTop + ta.clientTop}px`;
       mirror.style.width = `${ta.clientWidth}px`; mirror.style.height = `${ta.clientHeight}px`;
-      if (lastValue !== ta.value || lastMode !== mode) {
+      const selectionStart = ta.selectionStart;
+      const selectionEnd = ta.selectionEnd;
+      const selectionActive = document.activeElement === ta && selectionEnd > selectionStart;
+      if (lastValue !== ta.value || lastMode !== mode || lastSelectionStart !== selectionStart ||
+          lastSelectionEnd !== selectionEnd || lastSelectionActive !== selectionActive) {
         const frag = document.createDocumentFragment();
+        let sourceOffset = 0;
         for (const token of tokenize(ta.value, mode)) {
-          if (!token.kind) frag.append(document.createTextNode(token.text));
-          else { const span = document.createElement('span'); span.className = `${CLASS_PREFIX}-${token.kind}`; span.textContent = token.text; frag.append(span); }
+          const tokenEnd = sourceOffset + token.text.length;
+          const cuts = [sourceOffset, tokenEnd];
+          if (selectionStart > sourceOffset && selectionStart < tokenEnd) cuts.push(selectionStart);
+          if (selectionEnd > sourceOffset && selectionEnd < tokenEnd) cuts.push(selectionEnd);
+          cuts.sort((a, b) => a - b);
+          for (let index = 0; index < cuts.length - 1; index += 1) {
+            const start = cuts[index], end = cuts[index + 1];
+            const text = token.text.slice(start - sourceOffset, end - sourceOffset);
+            const selected = selectionActive && start < selectionEnd && end > selectionStart;
+            if (!token.kind && !selected) frag.append(document.createTextNode(text));
+            else {
+              const span = document.createElement('span');
+              span.className = [token.kind && `${CLASS_PREFIX}-${token.kind}`,
+                selected && `${CLASS_PREFIX}-selection`].filter(Boolean).join(' ');
+              span.textContent = text; frag.append(span);
+            }
+          }
+          sourceOffset = tokenEnd;
         }
         // textarea와 마지막 빈 줄 높이를 맞추기 위한 폭 없는 문자다.
         frag.append(document.createTextNode('\u200b'));
         mirror.replaceChildren(frag); lastValue = ta.value; lastMode = mode;
+        lastSelectionStart = selectionStart; lastSelectionEnd = selectionEnd;
+        lastSelectionActive = selectionActive;
       }
       mirror.hidden = false;
       mirror.scrollTop = ta.scrollTop; mirror.scrollLeft = ta.scrollLeft;
@@ -336,6 +362,10 @@
     // 입력, 스크롤과 한글 조합 상태를 원래 textarea에서 전달받는다.
     ta.addEventListener('input', schedule, { signal:events.signal });
     ta.addEventListener('change', schedule, { signal:events.signal });
+    ta.addEventListener('select', schedule, { signal:events.signal });
+    document.addEventListener('selectionchange', () => {
+      if (document.activeElement === ta) schedule();
+    }, { signal:events.signal });
     ta.addEventListener('scroll', syncScroll, { signal:events.signal, passive:true });
     ta.addEventListener('compositionstart', () => { composing = true; mirror.hidden = true; ta.classList.remove(`${CLASS_PREFIX}-colored`); }, { signal:events.signal });
     ta.addEventListener('compositionend', () => { composing = false; schedule(); }, { signal:events.signal });
@@ -374,7 +404,9 @@
   function scan() {
     scanFrame = 0;
     for (const [dialog, state] of states) {
-      if (!dialog.isConnected || !state.ta.isConnected || dialog.getAttribute('data-state') === 'closed') state.dispose();
+      // 닫힘 애니메이션 중에는 확대 스타일을 유지하고, DOM에서 실제 제거된 뒤 정리한다.
+      const closing = dialog.getAttribute('data-state') === 'closed';
+      if (!dialog.isConnected || (!state.ta.isConnected && !closing)) state.dispose();
     }
     document.querySelectorAll(`${DIALOG_SELECTOR}:not([data-state="closed"])`).forEach(attach);
   }
