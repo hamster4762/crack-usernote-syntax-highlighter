@@ -1,310 +1,435 @@
 // ==UserScript==
-// @name         크랙 유저노트 Syntax Highlighter
+// @name         크랙 유저노트 문법 강조기
 // @namespace    https://crack.wrtn.ai/
-// @version      0.1.0
-// @description  크랙 유저노트를 기본/JSON/MARKDOWN/TOML/XML 구문으로 해석하여 문법 강조를 지원합니다. 현재 스크롤바가 생성 또는 제거될 때 제대로 표시되지 않는 버그가 있어 0버전 적용하였습니다. (version 관리방식: 크랙UI변경.기능추가및수정.핫픽스)
-// @author       gemini
+// @version      1.0.1
+// @description  유저노트 팝업 확대 및 기본/JSON/MARKDOWN/TOML/XML 색상 강조. (version 관리방식: 크랙UI변경.기능추가및수정.핫픽스)
 // @match        https://crack.wrtn.ai/*
-// @require      https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js
-// @require      https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-toml.min.js
-// @require      https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js
-// @require      https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-markdown.min.js
-// @require      https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-markup.min.js
+// @run-at       document-idle
+// @grant        none
 // @updateURL    https://github.com/hamster4762/crack-usernote-syntax-highlighter/raw/refs/heads/main/crack-usernote-syntax-highlighter.user.js
 // @downloadURL  https://github.com/hamster4762/crack-usernote-syntax-highlighter/raw/refs/heads/main/crack-usernote-syntax-highlighter.user.js
-// @grant        none
-// @run-at       document-idle
+// @noframes
+// @icon         data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='%23ffffff' viewBox='0 0 24 24'%3E%3Cpath d='M8 8.35h8v-1.6H8zm8 4H8v-1.6h8zm-8 4h4v-1.6H8z'/%3E%3Cpath fill-rule='evenodd' d='M3.75 3.29c0-.72.58-1.3 1.3-1.3h13.9c.72 0 1.3.58 1.3 1.3v12.6c0 .32-.12.65-.37.9l-4.55 4.8q-.38.4-.95.41H5.05a1.3 1.3 0 0 1-1.3-1.3zm1.6.3V20.4h8.44v-3.8c0-.72.58-1.3 1.3-1.3h3.56V3.6zM17.57 16.9l-2.18 2.3v-2.3z' clip-rule='evenodd'/%3E%3C/svg%3E
 // ==/UserScript==
 
-(function() {
-    'use strict';
+(() => {
+  'use strict';
 
-    const PREFIX = 'cun-'; // 확장 충돌 방지용 고유 접두사
+  // 확장에서 사용하는 이름, 선택자와 레이아웃 기준을 한곳에서 관리한다.
+  const CLASS_PREFIX = 'crack-usernote-sh';
+  const STORAGE_KEY = `${CLASS_PREFIX}:format`;
+  const DIALOG_SELECTOR = '[role="dialog"]';
+  const CLOSE_BUTTON_SELECTOR = 'button[aria-label="닫기"]';
+  const USER_NOTE_TITLE = '유저노트';
+  const FORMAT_OPTIONS = [
+    ['plain', '기본'],
+    ['json', 'JSON'],
+    ['markdown', 'MARKDOWN'],
+    ['toml', 'TOML'],
+    ['xml', 'XML'],
+  ];
+  const DEFAULT_FORMAT = FORMAT_OPTIONS[0][0];
+  const FORMAT_NAMES = new Set(FORMAT_OPTIONS.map(([name]) => name));
+  const TOKEN_KINDS = [
+    'key', 'table', 'string', 'comment', 'literal', 'number', 'punct', 'tag',
+    'attribute', 'entity', 'heading', 'list', 'quote', 'code', 'link', 'emphasis',
+  ];
+  const LAYOUT = Object.freeze({
+    mobileBreakpoint: 768,
+    desktopWidthRatio: 0.52,
+    desktopHeightRatio: 0.86,
+    mobileHeightRatio: 1,
+    minimumEditorRows: 4,
+    fallbackButtonWidth: 80,
+    optionsGap: 8,
+    fallbackLineHeightRatio: 1.6,
+    selectMaxWidthRatio: 0.5,
+    lightTextThreshold: 155,
+  });
+  const LUMINANCE_WEIGHTS = Object.freeze([0.2126, 0.7152, 0.0722]);
+  const COLORS = Object.freeze({
+    light: {
+      key: '#245dae', table: '#9a6500', string: '#287341', comment: '#69716e',
+      literal: '#8543a8', number: '#a35612', punct: '#8b4150', tag: '#b23838',
+      attribute: '#245dae', entity: '#8b4b9b', heading: '#9a6500', list: '#b23838',
+      quote: '#287341', code: '#8543a8', link: '#245dae', emphasis: '#a35612',
+    },
+    dark: {
+      key: '#8fc4ff', table: '#ffd166', string: '#a5d69c', comment: '#a0a8a4',
+      literal: '#d8afff', number: '#edc287', punct: '#d4a0a8', tag: '#ff9696',
+      attribute: '#8fc4ff', entity: '#e5a9ee', heading: '#ffd166', list: '#ff9696',
+      quote: '#a5d69c', code: '#d8afff', link: '#8fc4ff', emphasis: '#edc287',
+    },
+  });
+  const MIRROR_STYLE_PROPERTIES = [
+    'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontStretch', 'fontVariant',
+    'fontKerning', 'fontFeatureSettings', 'fontVariationSettings', 'lineHeight',
+    'letterSpacing', 'wordSpacing', 'textAlign', 'textIndent', 'textTransform',
+    'tabSize', 'direction', 'whiteSpace', 'overflowWrap', 'wordBreak',
+    'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+  ];
 
-    // 1. Prism.js TOML 문법 한글 지원 패치 (기존 유지)
-    if (window.Prism && Prism.languages && Prism.languages.toml) {
-        const koreanTablePattern = /\[\[?(?:[\w가-힣\s.-]+|"[^"\r\n]*"|'[^'\r\n]*')\]\]?/;
-        if (Prism.languages.toml.table) {
-            Prism.languages.toml.table.pattern = koreanTablePattern;
-        }
-        const koreanKeyPattern = /(?:[\w가-힣-]+|"[^"\r\n]*"|'[^'\r\n]*')(?=\s*=)/;
-        if (Prism.languages.toml.key) {
-            Prism.languages.toml.key.pattern = koreanKeyPattern;
-        }
-        if (Prism.languages.toml.property) {
-            Prism.languages.toml.property.pattern = koreanKeyPattern;
-        }
+  // 각 문법은 오류가 있어도 입력을 막지 않는 느슨한 토큰 패턴을 사용한다.
+  const SYNTAX_PATTERNS = Object.freeze({
+    json: /("(?:\\[\s\S]|[^"\\\n])*"?)(\s*:)?|(\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$))|\b(true|false|null)\b|(-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|([{}\[\],:])/g,
+    toml: /("""[\s\S]*?(?:"""|$)|'''[\s\S]*?(?:'''|$)|"(?:\\[\s\S]|[^"\\\n])*"?|'[^'\n]*'?)([ \t]*=)?|(^[ \t]*\[\[?[^\n]*?\]\]?)|(^[ \t]*[^\s#=\[\]{}",'](?:[^\n#=]*?[^\s#=])?[ \t]*(?==))|(#[^\n]*)|\b(true|false|inf|nan)\b|([+-]?\b\d[\w.:+-]*)|([=\[\]{},])/gm,
+    xml: /(<!--[\s\S]*?(?:-->|$)|<!\[CDATA\[[\s\S]*?(?:\]\]>|$))|(<\/?[\p{L}_:][\p{L}\p{N}_.:\-]*|<\?[\w:-]+|<!DOCTYPE\b)|(\s+[\p{L}_:][\p{L}\p{N}_.:\-]*)(\s*=)|("[^"]*"?|'[^']*'?)|(&#?[\p{L}\p{N}#]+;)|([?/]?>|=)/gu,
+    markdown: /(^[ \t]*(?:`{3,}|~{3,})[^\n]*(?:\n[\s\S]*?(?:\n[ \t]*(?:`{3,}|~{3,})[^\n]*|$))?)|(^[ \t]*#{1,6}[^\n]*)|(^[ \t]*(?:-|[+*](?![+*])|\d+[.)]))|(^[ \t]*>+)|(`+[^`\n]*`+)|(!?\[[^\]\n]*\]\([^\n)]*\))|(\*\*[^\n]*?\*\*|__[^\n]*?__|~~[^\n]*?~~|\*[^*\n]+\*|_[^_\n]+_)/gm,
+  });
+
+  // 정규식 캡처 위치를 문법별 색상 역할로 변환한다.
+  function classifyToken(mode, match) {
+    if (mode === 'json') {
+      if (match[1]) return match[2] ? 'key' : 'string';
+      if (match[3]) return 'comment';
+      if (match[4]) return 'literal';
+      return match[5] ? 'number' : 'punct';
+    }
+    if (mode === 'toml') {
+      if (match[1]) return match[2] ? 'key' : 'string';
+      if (match[3]) return 'table';
+      if (match[4]) return 'key';
+      if (match[5]) return 'comment';
+      if (match[6]) return 'literal';
+      return match[7] ? 'number' : 'punct';
+    }
+    if (mode === 'xml') {
+      if (match[1]) return 'comment';
+      if (match[2]) return 'tag';
+      if (match[3]) return 'attribute';
+      if (match[5]) return 'string';
+      return match[6] ? 'entity' : 'punct';
+    }
+    if (match[1]) return 'code';
+    if (match[2]) return 'heading';
+    if (match[3]) return 'list';
+    if (match[4]) return 'quote';
+    if (match[5]) return 'code';
+    return match[6] ? 'link' : 'emphasis';
+  }
+
+  // 원문과 공백을 그대로 보존하면서 색칠할 토큰만 분리한다.
+  function tokenize(source, mode) {
+    const out = [];
+    const emit = (text, kind = '') => { if (text) out.push({ text, kind }); };
+    if (mode === DEFAULT_FORMAT) {
+      emit(source);
+      return out;
+    }
+    const re = SYNTAX_PATTERNS[mode];
+    if (!re) {
+      emit(source);
+      return out;
+    }
+    let end = 0;
+    for (const m of source.matchAll(re)) {
+      emit(source.slice(end, m.index));
+      emit(m[0], classifyToken(mode, m));
+      end = m.index + m[0].length;
+    }
+    emit(source.slice(end));
+    return out;
+  }
+
+  // 색상 객체를 접두사가 붙은 CSS 변수 선언으로 변환한다.
+  function createColorVariables(colors) {
+    return TOKEN_KINDS.map(kind => `--${CLASS_PREFIX}-${kind}:${colors[kind]};`).join('');
+  }
+
+  // localStorage가 차단되거나 값이 손상돼도 기본 형식으로 안전하게 복구한다.
+  function loadFormat() {
+    try {
+      const savedFormat = localStorage.getItem(STORAGE_KEY);
+      return FORMAT_NAMES.has(savedFormat) ? savedFormat : DEFAULT_FORMAT;
+    } catch {
+      return DEFAULT_FORMAT;
+    }
+  }
+
+  // 선택값만 같은 사이트의 localStorage에 저장하며 실패는 기능 동작에 영향을 주지 않는다.
+  function saveFormat(format) {
+    try {
+      localStorage.setItem(STORAGE_KEY, format);
+    } catch {
+      // 저장이 불가능한 환경에서는 현재 팝업에서만 선택값을 유지한다.
+    }
+  }
+
+  // Node 환경에서는 DOM 초기화를 건너뛰고 토크나이저만 테스트에 노출한다.
+  if (typeof module !== 'undefined' && module.exports && typeof document === 'undefined') {
+    module.exports = { tokenize }; return;
+  }
+
+  // 동일 스크립트가 중복 실행됐을 때 스타일과 감시자를 추가하지 않는다.
+  if (document.getElementById(`${CLASS_PREFIX}-style`)) return;
+
+  // 유저노트 팝업에 붙인 전용 클래스에만 반응하는 스타일을 주입한다.
+  const sheet = document.createElement('style');
+  sheet.id = `${CLASS_PREFIX}-style`;
+  sheet.textContent = `
+    /* 팝업과 편집영역 크기 */
+    .${CLASS_PREFIX}-dialog { width:${LAYOUT.desktopWidthRatio * 100}vw !important; max-width:none !important;
+      height:var(--${CLASS_PREFIX}-height) !important; max-height:var(--${CLASS_PREFIX}-height) !important;
+      top:var(--${CLASS_PREFIX}-top) !important; overflow:auto !important; }
+    .${CLASS_PREFIX}-body { flex:1 0 auto !important; min-height:min-content !important; }
+    .${CLASS_PREFIX}-group { position:relative !important; flex:1 0 auto !important; min-height:min-content !important; }
+    .${CLASS_PREFIX}-textarea { flex:1 1 auto !important; min-height:var(--${CLASS_PREFIX}-minimum) !important;
+      max-height:none !important; }
+    .${CLASS_PREFIX}-body > :not(.${CLASS_PREFIX}-group), .${CLASS_PREFIX}-group > :not(.${CLASS_PREFIX}-textarea):not(.${CLASS_PREFIX}-mirror),
+    .${CLASS_PREFIX}-dialog > :not(.${CLASS_PREFIX}-body) { flex-shrink:0 !important; }
+    .${CLASS_PREFIX}-options { position:absolute !important; z-index:2; left:0 !important;
+      top:var(--${CLASS_PREFIX}-options-top) !important; width:calc(100% - var(--${CLASS_PREFIX}-options-reserve)) !important;
+      margin:0 !important; }
+
+    /* 원래 textarea의 입력 기능을 보존하는 투명 글자 레이어 */
+    textarea.${CLASS_PREFIX}-colored { color:transparent !important; -webkit-text-fill-color:transparent !important;
+      caret-color:var(--${CLASS_PREFIX}-caret) !important; }
+    textarea.${CLASS_PREFIX}-colored::selection { color:transparent !important; -webkit-text-fill-color:transparent !important; }
+    textarea.${CLASS_PREFIX}-colored::placeholder { -webkit-text-fill-color:currentColor !important; }
+    .${CLASS_PREFIX}-mirror { position:absolute !important; pointer-events:none !important; user-select:none !important;
+      overflow:hidden !important; margin:0 !important; border:0 !important; box-sizing:border-box !important;
+      background:transparent !important; z-index:1; text-decoration:none !important; }
+    .${CLASS_PREFIX}-mirror[hidden] { display:none !important; }
+    .${CLASS_PREFIX}-mirror span { font:inherit !important; letter-spacing:inherit !important;
+      text-decoration:none !important; background:transparent !important; }
+
+    /* 밝은 테마와 어두운 테마의 토큰 색 */
+    .${CLASS_PREFIX}-mirror { ${createColorVariables(COLORS.light)} }
+    .${CLASS_PREFIX}-mirror[data-dark="true"] { ${createColorVariables(COLORS.dark)} }
+    ${TOKEN_KINDS.map(kind => `.${CLASS_PREFIX}-mirror .${CLASS_PREFIX}-${kind} {color:var(--${CLASS_PREFIX}-${kind}) !important;}`).join('\n')}
+    .${CLASS_PREFIX}-mirror .${CLASS_PREFIX}-selection { color:#fff !important;
+      background:rgba(59,130,246,.55) !important; }
+
+    /* 유저노트 헤더의 문법 선택 상자 */
+    .${CLASS_PREFIX}-select { font:inherit; font-size:.8em; color:inherit; background:var(--${CLASS_PREFIX}-surface);
+      border:1px solid currentColor; border-radius:.35em; padding:.35em .45em;
+      margin-inline-start:auto; max-width:${LAYOUT.selectMaxWidthRatio * 100}%; flex-shrink:1; cursor:pointer; }
+
+    /* 강제 색상 모드에서는 브라우저의 기본 텍스트 대비를 우선한다. */
+    @media (forced-colors:active) {
+      textarea.${CLASS_PREFIX}-colored { color:CanvasText !important; -webkit-text-fill-color:CanvasText !important; }
+      .${CLASS_PREFIX}-mirror { display:none !important; }
     }
 
-    // 2. CSS 주입 (다른 언어를 위한 컬러 토큰 추가 및 콤보박스 스타일 병합)
-    const style = document.createElement('style');
-    style.textContent = `
-        /* Overlay 컨테이너 */
-        .${PREFIX}container {
-            position: relative !important;
-            width: 100% !important;
-            height: 100% !important;
-        }
-
-        /* 텍스트에어리어 (투명화 지정) */
-        .${PREFIX}textarea {
-            position: absolute !important;
-            inset: 0 !important;
-            background: transparent !important;
-            color: transparent !important;
-            caret-color: var(--text_brand, var(--text_primary, #000)) !important;
-            z-index: 2 !important;
-            resize: none !important;
-            white-space: pre-wrap !important;
-            word-break: break-all !important;
-        }
-
-        .${PREFIX}textarea::selection {
-            background-color: rgba(59, 130, 246, 0.4) !important;
-            color: transparent !important;
-        }
-
-        .${PREFIX}textarea::placeholder {
-            color: var(--text_disabled, #9ca3af) !important;
-        }
-
-        /* '기본(none)' 모드일 때 투명화 해제 */
-        .${PREFIX}none .${PREFIX}textarea {
-            color: var(--text_primary, inherit) !important;
-            background: transparent !important;
-        }
-        .${PREFIX}none .${PREFIX}textarea::selection {
-            color: inherit !important;
-        }
-
-        /* Syntax Highlighter 위치 레이어 */
-        .${PREFIX}backdrop {
-            position: absolute !important;
-            height: 100% !important;
-            inset: 0 !important;
-            z-index: 1 !important;
-            pointer-events: none !important;
-            overflow: hidden !important;
-            white-space: pre-wrap !important;
-            word-wrap: break-word !important;
-            word-break: break-all !important;
-        }
-
-        /* '기본(none)' 모드일 때 백드롭 레이어 숨김 */
-        .${PREFIX}none .${PREFIX}backdrop {
-            display: none !important;
-        }
-
-        /* 레이어 폰트 싱크 - 텍스트에어리어의 요소를 철저히 복제 */
-        .${PREFIX}backdrop code {
-            font-family: inherit !important;
-            font-size: inherit !important;
-            line-height: inherit !important;
-            letter-spacing: inherit !important;
-            color: var(--text_primary, inherit) !important;
-        }
-
-        /* 언어 선택 콤보박스 스타일 */
-        .${PREFIX}select {
-            margin-left: 14px !important;
-            padding: 2px 26px 2px 8px !important;
-            font-size: 13px !important;
-            font-weight: 500 !important;
-            border-radius: 6px !important;
-            border: 1px solid var(--outline_secondary, #d1d5db) !important;
-            background-color: transparent !important;
-            color: var(--text_primary, inherit) !important;
-            cursor: pointer !important;
-            outline: none !important;
-            appearance: none !important;
-            background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e") !important;
-            background-repeat: no-repeat !important;
-            background-position: right 6px center !important;
-            background-size: 14px !important;
-            transition: border-color 0.2s;
-        }
-        .${PREFIX}select:hover, .${PREFIX}select:focus {
-            border-color: #9ca3af !important;
-        }
-        .${PREFIX}select option {
-            background-color: var(--surface_primary, #fff) !important;
-            color: var(--text_primary, #000) !important;
-        }
-
-        /* Prism 테마 설정 (기존 TOML + JSON/MD/XML 추가 대응) */
-        .${PREFIX}backdrop .token {
-            text-decoration: none !important;
-            font-weight: inherit !important;
-            font-style: inherit !important;
-        }
-
-        .${PREFIX}backdrop .token.comment { color: #668d5d !important; }
-        .${PREFIX}backdrop .token.string { color: #afa688 !important; }
-        .${PREFIX}backdrop .token.number,
-        .${PREFIX}backdrop .token.boolean,
-        .${PREFIX}backdrop .token.tag { color: #f472b6 !important; } /* Tag(XML), Number/Bool */
-        .${PREFIX}backdrop .token.key,
-        .${PREFIX}backdrop .token.property,
-        .${PREFIX}backdrop .token.attr-name,
-        .${PREFIX}backdrop .token.url { color: #5b90cc !important; } /* Key(JSON/TOML), Attr(XML), URL(MD) */
-        .${PREFIX}backdrop .token.table,
-        .${PREFIX}backdrop .token.title { color: #fbbf24 !important; display:inline; font-weight: bold !important; } /* Table(TOML), Title(MD) */
-        .${PREFIX}backdrop .token.punctuation,
-        .${PREFIX}backdrop .token.list { color: #82ca79 !important; } /* Punc, List(MD) */
-        .${PREFIX}backdrop .token.attr-value { color: #afa688 !important; } /* Attr Value(XML) */
-    `;
-    document.head.appendChild(style);
-
-    // 3. UI 변경 및 Highlight 적용 함수
-    function enhanceUserNote(dialog) {
-        if (dialog.dataset.cunProcessed) return;
-
-        // (1) 헤더 타이틀이 "유저노트"인지 확인
-        const titleEl = dialog.querySelector('h2');
-        if (!titleEl || !titleEl.textContent.includes('유저노트')) return;
-
-        dialog.dataset.cunProcessed = 'true';
-
-        // --- 크기 늘리기 로직 ---
-        dialog.classList.remove('max-w-lg');
-        dialog.style.setProperty('width', '90%', 'important');
-        dialog.style.setProperty('height', '90%', 'important');
-
-        const wFull = dialog.querySelector('.w-full');
-        if (wFull) {
-            wFull.classList.add('h-full');
-            const innerFlex = wFull.querySelector('.flex.flex-col.gap-3');
-            if (innerFlex) innerFlex.classList.add('h-full');
-        }
-
-        const textarea = dialog.querySelector('textarea');
-        if (!textarea) return;
-
-        textarea.classList.remove('max-h-[386px]');
-        textarea.style.setProperty('height', '100%', 'important');
-
-        // --- 구문 강조 오버레이 구성 ---
-        const container = document.createElement('div');
-        container.className = `${PREFIX}container`;
-
-        const backdrop = document.createElement('div');
-        backdrop.className = `${textarea.className} ${PREFIX}backdrop`;
-        backdrop.style.border = 'none';
-
-        const code = document.createElement('code');
-        backdrop.appendChild(code);
-
-        // 노드 구조 변경 (컨테이너로 감싸기)
-        textarea.parentNode.insertBefore(container, textarea);
-        container.appendChild(backdrop);
-        container.appendChild(textarea);
-        textarea.classList.add(`${PREFIX}textarea`);
-
-        // --- 동기화 및 렌더링 로직 ---
-        const syncUpdate = () => {
-            let text = textarea.value;
-            // "기본" 모드 시 렌더링 패스 (최적화)
-            if (container.classList.contains(`${PREFIX}none`)) return;
-
-            // 마지막 줄 바꿈 시 스크롤 어긋남 방지 코드
-            if (text.endsWith('\n')) {
-                text += ' ';
-            }
-            // Text 업데이트 및 Prism 처리
-            code.textContent = text;
-            if (window.Prism) {
-                Prism.highlightElement(code);
-            }
-        };
-
-        const syncScroll = () => {
-            backdrop.scrollTop = textarea.scrollTop;
-            backdrop.scrollLeft = textarea.scrollLeft;
-        };
-
-        textarea.addEventListener('input', syncUpdate);
-        textarea.addEventListener('scroll', syncScroll, { passive: true });
-
-        // --- 언어 선택 콤보박스(Select) 추가 로직 ---
-        const headerTitleContainer = dialog.querySelector('.group\\/dialogHeader .flex.items-center');
-        if (headerTitleContainer && !headerTitleContainer.querySelector(`.${PREFIX}select`)) {
-            const select = document.createElement('select');
-            select.className = `${PREFIX}select`;
-
-            const options = [
-                { value: 'none', text: '기본' },
-                { value: 'json', text: 'JSON' },
-                { value: 'markdown', text: 'MARKDOWN' },
-                { value: 'toml', text: 'TOML' },
-                { value: 'xml', text: 'XML' }
-            ];
-
-            options.forEach(opt => {
-                const option = document.createElement('option');
-                option.value = opt.value;
-                option.textContent = opt.text;
-                select.appendChild(option);
-            });
-
-            // 저장된 언어 불러오기 (기본값 설정)
-            const savedLang = localStorage.getItem('cun-language') || 'toml';
-            select.value = savedLang;
-
-            const updateLanguage = (lang) => {
-                if (lang === 'none') {
-                    container.classList.add(`${PREFIX}none`);
-                    code.className = '';
-                } else {
-                    container.classList.remove(`${PREFIX}none`);
-                    code.className = `language-${lang}`;
-                    // "기본" -> "기타" 변경 시 DOM 반영을 보장하기 위함
-                    requestAnimationFrame(syncUpdate);
-                }
-            };
-
-            // 선택값 변경 이벤트
-            select.addEventListener('change', (e) => {
-                const newLang = e.target.value;
-                localStorage.setItem('cun-language', newLang);
-                updateLanguage(newLang);
-            });
-
-            // 헤더의 텍스트 바로 옆에 주입
-            headerTitleContainer.appendChild(select);
-
-            // 초기 언어 모드 세팅
-            updateLanguage(savedLang);
-        } else {
-            // 방어코드: UI 조작에 실패한 경우 기본 fallback
-            container.classList.remove(`${PREFIX}none`);
-            code.className = 'language-toml';
-            syncUpdate();
-        }
+    /* 모바일에서는 크랙의 바텀시트 좌표를 해제하고 보이는 화면을 채운다. */
+    @media (max-width:${LAYOUT.mobileBreakpoint}px) {
+      .${CLASS_PREFIX}-dialog { width:100vw !important; height:var(--${CLASS_PREFIX}-height) !important;
+        max-height:var(--${CLASS_PREFIX}-height) !important; left:0 !important; right:auto !important;
+        bottom:auto !important; transform:none !important; border-radius:0 !important; border-inline:0 !important; }
     }
+  `;
+  document.head.append(sheet);
 
-    // 4. 모달 감시 옵저버
-    const observer = new MutationObserver((mutations) => {
-        for (const mutation of mutations) {
-            if (mutation.addedNodes) {
-                mutation.addedNodes.forEach(node => {
-                    if (node.nodeType === 1) { // ELEMENT_NODE
-                        if (node.getAttribute('role') === 'dialog') {
-                            enhanceUserNote(node);
-                        } else {
-                            const dialogs = node.querySelectorAll('div[role="dialog"]');
-                            dialogs.forEach(enhanceUserNote);
-                        }
-                    }
-                });
-            }
-        }
+  // 열려 있는 유저노트 팝업별 정리 함수를 추적한다.
+  const states = new Map();
+  const px = v => Number.parseFloat(v) || 0;
+
+  // 확인된 크랙 유저노트 구조와 일치하는 팝업 하나에만 기능을 연결한다.
+  function attach(dialog) {
+    if (states.has(dialog)) return;
+    const heading = [...dialog.querySelectorAll('h2')].find(h => h.textContent.trim() === USER_NOTE_TITLE);
+    const editors = dialog.querySelectorAll('textarea');
+    if (!heading || editors.length !== 1) return;
+
+    // 크랙 UI 구조가 변경됐으면 다른 팝업을 건드리지 않고 적용을 중단한다.
+    const ta = editors[0], group = ta.parentElement, body = group.parentElement;
+    const header = heading.parentElement.parentElement;
+    if (body.parentElement !== dialog || header.parentElement !== dialog || !header.querySelector(CLOSE_BUTTON_SELECTOR)) return;
+    const ds = getComputedStyle(dialog), ts = getComputedStyle(ta);
+    const footer = dialog.lastElementChild;
+    const options = ta.nextElementSibling;
+    if (!footer || footer === body || !footer.querySelector('button') || !options) return;
+
+    // 팝업을 닫을 때 되돌릴 textarea의 원래 상태를 보관한다.
+    const originalHeight = [ta.style.getPropertyValue('height'), ta.style.getPropertyPriority('height')];
+    const originalSpellcheck = ta.getAttribute('spellcheck');
+
+    // 원래 textarea 위에 겹칠 색상 레이어와 문법 선택 상자를 만든다.
+    const mirror = document.createElement('pre');
+    mirror.className = `${CLASS_PREFIX}-mirror`; mirror.setAttribute('aria-hidden', 'true'); mirror.hidden = true;
+    const select = document.createElement('select');
+    select.className = `${CLASS_PREFIX}-select`; select.setAttribute('aria-label', '유저노트 문법');
+    select.title = '글자색만 강조합니다. 문법 오류는 검사하지 않습니다.';
+    FORMAT_OPTIONS.forEach(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      select.append(option);
     });
+    select.value = loadFormat();
+    select.style.setProperty(`--${CLASS_PREFIX}-surface`, ds.backgroundColor);
 
-    observer.observe(document.body, { childList: true, subtree: true });
+    // 기존 폰트와 커서 색을 가져오고 확장 전용 클래스만 추가한다.
+    const originalColor = ts.color, originalCaret = ts.caretColor;
+    const lineHeight = px(ts.lineHeight) || px(ts.fontSize) * LAYOUT.fallbackLineHeightRatio;
+    ta.style.setProperty(`--${CLASS_PREFIX}-minimum`, `${lineHeight * LAYOUT.minimumEditorRows}px`);
+    ta.style.setProperty(`--${CLASS_PREFIX}-caret`, originalCaret === 'auto' ? originalColor : originalCaret);
+    const marks = [[dialog,'dialog'],[body,'body'],[group,'group'],[ta,'textarea'],[options,'options']];
+    marks.forEach(([el,k]) => el.classList.add(`${CLASS_PREFIX}-${k}`));
+    group.append(mirror);
+    header.insertBefore(select, header.querySelector(CLOSE_BUTTON_SELECTOR));
 
-    // 스크립트 로드 시 이미 열려있는 다이얼로그 강제 처리
-    const existingDialog = document.querySelector('div[role="dialog"]');
-    if (existingDialog) {
-        enhanceUserNote(existingDialog);
+    // 이벤트와 렌더링 상태는 팝업 단위로 관리한다.
+    let frame = 0, lastValue, lastMode, lastSelectionStart, lastSelectionEnd,
+      lastSelectionActive, disposed = false;
+    const events = new AbortController();
+
+    // 크랙의 인라인 자동 높이보다 편집영역 확장 규칙을 우선한다.
+    function ensureHeight() {
+      if (ta.style.getPropertyValue('height') !== '0px' || ta.style.getPropertyPriority('height') !== 'important') ta.style.setProperty('height', '0px', 'important');
     }
+
+    // visualViewport를 기준으로 PC와 모바일 팝업 크기 및 위치를 갱신한다.
+    function viewport() {
+      const vv = window.visualViewport;
+      const mobile = (vv?.width || innerWidth) <= LAYOUT.mobileBreakpoint;
+      const heightRatio = mobile ? LAYOUT.mobileHeightRatio : LAYOUT.desktopHeightRatio;
+      dialog.style.setProperty(`--${CLASS_PREFIX}-height`, `${(vv?.height || innerHeight) * heightRatio}px`);
+      dialog.style.setProperty(`--${CLASS_PREFIX}-top`, `${mobile ? (vv?.offsetTop || 0) : (vv?.offsetTop || 0) + (vv?.height || innerHeight) / 2}px`);
+      schedule();
+    }
+
+    // 기본 모드로 돌아왔을 때 사이트의 원래 맞춤법 검사 설정을 복원한다.
+    function restoreSpellcheck() {
+      if (originalSpellcheck === null) ta.removeAttribute('spellcheck'); else ta.setAttribute('spellcheck', originalSpellcheck);
+    }
+    // 한 프레임에 한 번만 하단 배치와 문법 강조 레이어를 갱신한다.
+    function render() {
+      frame = 0;
+      if (disposed || !ta.isConnected) return;
+      ensureHeight();
+      const mode = select.value;
+      select.style.setProperty(`--${CLASS_PREFIX}-surface`, getComputedStyle(dialog).backgroundColor);
+      const active = mode !== DEFAULT_FORMAT && ta.value.length > 0;
+      if (mode === DEFAULT_FORMAT) restoreSpellcheck(); else ta.setAttribute('spellcheck', 'false');
+      const grNow = group.getBoundingClientRect(), fr = footer.getBoundingClientRect(), or = options.getBoundingClientRect();
+      const footerButton = footer.querySelector('button');
+      const br = footerButton?.getBoundingClientRect();
+      group.style.setProperty(`--${CLASS_PREFIX}-options-top`, `${fr.top - grNow.top + (fr.height - or.height) / 2}px`);
+      group.style.setProperty(`--${CLASS_PREFIX}-options-reserve`, `${(br?.width || LAYOUT.fallbackButtonWidth) + px(getComputedStyle(footer).gap) + LAYOUT.optionsGap}px`);
+      if (!active) { mirror.hidden = true; ta.classList.remove(`${CLASS_PREFIX}-colored`); return; }
+      ta.classList.remove(`${CLASS_PREFIX}-colored`);
+      const style = getComputedStyle(ta);
+      for (const key of MIRROR_STYLE_PROPERTIES) mirror.style[key] = style[key];
+      mirror.style.color = style.color;
+      const channels = style.color.match(/[\d.]+/g)?.map(Number);
+      const textLuminance = channels?.reduce((sum, channel, index) => sum + channel * LUMINANCE_WEIGHTS[index], 0);
+      mirror.dataset.dark = String(textLuminance > LAYOUT.lightTextThreshold);
+      const tr = ta.getBoundingClientRect(), gr = group.getBoundingClientRect();
+      mirror.style.left = `${tr.left - gr.left - group.clientLeft + group.scrollLeft + ta.clientLeft}px`;
+      mirror.style.top = `${tr.top - gr.top - group.clientTop + group.scrollTop + ta.clientTop}px`;
+      mirror.style.width = `${ta.clientWidth}px`; mirror.style.height = `${ta.clientHeight}px`;
+      const selectionStart = ta.selectionStart;
+      const selectionEnd = ta.selectionEnd;
+      const selectionActive = document.activeElement === ta && selectionEnd > selectionStart;
+      if (lastValue !== ta.value || lastMode !== mode || lastSelectionStart !== selectionStart ||
+          lastSelectionEnd !== selectionEnd || lastSelectionActive !== selectionActive) {
+        const frag = document.createDocumentFragment();
+        let sourceOffset = 0;
+        for (const token of tokenize(ta.value, mode)) {
+          const tokenEnd = sourceOffset + token.text.length;
+          const cuts = [sourceOffset, tokenEnd];
+          if (selectionStart > sourceOffset && selectionStart < tokenEnd) cuts.push(selectionStart);
+          if (selectionEnd > sourceOffset && selectionEnd < tokenEnd) cuts.push(selectionEnd);
+          cuts.sort((a, b) => a - b);
+          for (let index = 0; index < cuts.length - 1; index += 1) {
+            const start = cuts[index], end = cuts[index + 1];
+            const text = token.text.slice(start - sourceOffset, end - sourceOffset);
+            const selected = selectionActive && start < selectionEnd && end > selectionStart;
+            if (!token.kind && !selected) frag.append(document.createTextNode(text));
+            else {
+              const span = document.createElement('span');
+              span.className = [token.kind && `${CLASS_PREFIX}-${token.kind}`,
+                selected && `${CLASS_PREFIX}-selection`].filter(Boolean).join(' ');
+              span.textContent = text; frag.append(span);
+            }
+          }
+          sourceOffset = tokenEnd;
+        }
+        // textarea와 마지막 빈 줄 높이를 맞추기 위한 폭 없는 문자다.
+        frag.append(document.createTextNode('\u200b'));
+        mirror.replaceChildren(frag); lastValue = ta.value; lastMode = mode;
+        lastSelectionStart = selectionStart; lastSelectionEnd = selectionEnd;
+        lastSelectionActive = selectionActive;
+      }
+      mirror.hidden = false;
+      mirror.scrollTop = ta.scrollTop; mirror.scrollLeft = ta.scrollLeft;
+      ta.classList.add(`${CLASS_PREFIX}-colored`);
+    }
+    function schedule() { if (!frame && !disposed) frame = requestAnimationFrame(render); }
+    function syncScroll() { mirror.scrollTop = ta.scrollTop; mirror.scrollLeft = ta.scrollLeft; }
+
+    // 입력, 스크롤과 한글 조합 상태를 원래 textarea에서 전달받는다.
+    ta.addEventListener('input', schedule, { signal:events.signal });
+    ta.addEventListener('change', schedule, { signal:events.signal });
+    ta.addEventListener('select', schedule, { signal:events.signal });
+    document.addEventListener('selectionchange', () => {
+      if (document.activeElement === ta) schedule();
+    }, { signal:events.signal });
+    ta.addEventListener('scroll', syncScroll, { signal:events.signal, passive:true });
+    // 조합 중에도 input으로 강조를 갱신하고 원래 textarea의 IME 동작을 유지한다.
+    ta.addEventListener('compositionstart', schedule, { signal:events.signal });
+    ta.addEventListener('compositionend', schedule, { signal:events.signal });
+    select.addEventListener('change', () => {
+      saveFormat(select.value);
+      schedule();
+    }, { signal:events.signal });
+
+    // 실제 크기와 사이트의 인라인 높이 변경만 관찰해 불필요한 전체 렌더링을 피한다.
+    const resize = new ResizeObserver(schedule); resize.observe(ta); resize.observe(group); resize.observe(footer); resize.observe(options);
+    const autosize = new MutationObserver(() => { ensureHeight(); schedule(); });
+    // class 변경은 제외해 확장 자신의 렌더링이 감시자를 재호출하지 않게 한다.
+    autosize.observe(ta, { attributes:true, attributeFilter:['style'], childList:true });
+
+    // 창 크기와 모바일 가상 키보드 변화에 맞춰 팝업을 다시 배치한다.
+    window.addEventListener('resize', viewport, { signal:events.signal, passive:true });
+    window.visualViewport?.addEventListener('resize', viewport, { signal:events.signal, passive:true });
+    window.visualViewport?.addEventListener('scroll', viewport, { signal:events.signal, passive:true });
+    // 팝업이 닫히면 추가 요소·이벤트·스타일을 제거하고 원래 상태로 되돌린다.
+    function dispose() {
+      disposed = true; cancelAnimationFrame(frame); events.abort(); resize.disconnect(); autosize.disconnect();
+      mirror.remove(); select.remove(); marks.forEach(([el,k]) => el.classList.remove(`${CLASS_PREFIX}-${k}`));
+      ta.classList.remove(`${CLASS_PREFIX}-colored`); restoreSpellcheck();
+      if (ta.style.getPropertyValue('height') === '0px') {
+        if (originalHeight[0]) ta.style.setProperty('height', ...originalHeight); else ta.style.removeProperty('height');
+      }
+      for (const [el, names] of [[dialog,['height','top']],[ta,['minimum','caret']],[group,['options-top','options-reserve']]]) names.forEach(n => el.style.removeProperty(`--${CLASS_PREFIX}-${n}`));
+      states.delete(dialog);
+    }
+    states.set(dialog, { ta, dispose, schedule });
+    ensureHeight(); viewport();
+  }
+
+  // DOM 변화가 몰려도 다음 애니메이션 프레임에 한 번만 팝업을 탐색한다.
+  let scanFrame = 0;
+  function scan() {
+    scanFrame = 0;
+    for (const [dialog, state] of states) {
+      // 닫힘 애니메이션 중에는 확대 스타일을 유지하고, DOM에서 실제 제거된 뒤 정리한다.
+      const closing = dialog.getAttribute('data-state') === 'closed';
+      if (!dialog.isConnected || (!state.ta.isConnected && !closing)) state.dispose();
+    }
+    document.querySelectorAll(`${DIALOG_SELECTOR}:not([data-state="closed"])`).forEach(attach);
+  }
+
+  // 팝업 생성·제거·상태 변화만 선별해 관찰한다.
+  const observer = new MutationObserver(records => {
+    const relevant = records.some(r => {
+      if (r.target instanceof Element && r.target.closest(`.${CLASS_PREFIX}-mirror, .${CLASS_PREFIX}-select`)) return false;
+      if (r.type === 'attributes') return r.target.matches?.(DIALOG_SELECTOR);
+      if (r.target instanceof Element && r.target.closest(DIALOG_SELECTOR)) return true;
+      return [...r.addedNodes, ...r.removedNodes].some(n => n instanceof Element && (n.matches(DIALOG_SELECTOR) || n.querySelector(DIALOG_SELECTOR)));
+    });
+    if (relevant && !scanFrame) scanFrame = requestAnimationFrame(scan);
+  });
+  observer.observe(document.body, { childList:true, subtree:true, attributes:true, attributeFilter:['data-state'] });
+
+  // 사이트 테마 속성이 바뀌면 현재 팝업의 대비 색만 다시 계산한다.
+  const themeObserver = new MutationObserver(() => { for (const state of states.values()) state.schedule(); });
+  for (const el of [document.documentElement, document.body]) {
+    themeObserver.observe(el, { attributes:true, attributeFilter:['class','data-theme','style'] });
+  }
+
+  // 페이지가 이미 유저노트를 열어둔 상태에서도 즉시 적용한다.
+  scan();
 })();
